@@ -16,27 +16,15 @@ import (
 	"github.com/prometheus/common/version"
 )
 
-var (
-
-	// Create a gauge with one label named ("path").
-	fileCount = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "file_count_on_path",
-			Help: "Count number of files on the path.",
-		},
-		// The label name by which to split the metric.
-		[]string{"path"},
-	)
-)
-
 func main() {
 
+	// listening endpoint
 	endpoint := flag.String("endpoint", "localhost:8800", "The address to listen on for HTTP requests <IP>:<PORT>")
 	flag.Parse()
 
-	log.Println("msg", "Build context", "build_context", version.BuildContext())
+	log.Println("Build context", "build_context", version.BuildContext())
 
-	fmt.Println("endpoint:", *endpoint)
+	log.Println("endpoint:", *endpoint)
 	for _, s := range flag.Args() {
 		fmt.Println("arg: ", s)
 	}
@@ -45,26 +33,37 @@ func main() {
 		log.Fatal("missing paths")
 	}
 
-	// Create a non-global registry.
+	// prometheus: create a gauge with one label named ("path")
+	fileCount := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "file_count_on_path",
+			Help: "Count number of files on the path.",
+		},
+		// The label name by which to split the metric.
+		[]string{"path"},
+	)
+
+	// prometheus: create a non-global registry
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewBuildInfoCollector(), fileCount)
 
-	// Create new watcher.
+	// fsnotify: create new watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer watcher.Close()
 
-	// get paths from arg line
-	for _, v := range flag.Args() {
-		err = watcher.Add(v)
+	// fsnotify: add paths passed on command line
+	for _, path := range flag.Args() {
+		err = watcher.Add(path)
 		if err != nil {
-			log.Fatal(err, " : ", v)
+			log.Fatal(err, " : ", path)
 		}
 	}
 
-	// Start listening for events.
+	// fsnotify: start listening for events
+	// we are interested only on file create/remove events
 	go func() {
 		for {
 			select {
@@ -93,20 +92,16 @@ func main() {
 		}
 	}()
 
-	// Expose the registered metrics via HTTP.
+	// prometheus: expose the registered metrics via HTTP.
 	http.Handle("/metrics", promhttp.HandlerFor(
 		reg,
 		promhttp.HandlerOpts{
-			// Opt into OpenMetrics to support exemplars.
-			EnableOpenMetrics: true,
 			// Pass custom registry
 			Registry: reg,
 		},
 	))
 	log.Fatal(http.ListenAndServe(*endpoint, nil))
 
-	// Block main goroutine forever.
-	//<-make(chan struct{})
 }
 
 func init() {
