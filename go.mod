@@ -1,4 +1,4 @@
-module gowatch
+module file_count_exporter
 
 go 1.22.0
 
