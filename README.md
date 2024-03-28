@@ -1,5 +1,5 @@
 
-This is Prometheus exporter that shows the current number of files per directory.
+This is Prometheus exporter that shows the current number of files per directory, written in Go.
 
 
 ```bash
@@ -15,9 +15,16 @@ list of paths
     	The address to listen on for HTTP requests <IP>:<PORT> (default "localhost:8800")
 ```
 
-Exporter takes a list of path to be monitored.
+Exporter takes a list of path which should be be monitored.
 
-Files are counted using __"fsnotify"__ package, so even large folders can be tracked easily.
-Go package __"fsnotify"__ uses __"inotify"__ API on Linux, which is basically relying on Linux kernel to send us notifications on file creation/deletion.
+Files are counted using __"fsnotify"__ Go package, so even large folders can be tracked easily.
+
+
+Go package __"fsnotify"__ uses __"inotify"__ on Linux.
+__"inotify"__ is a Linux kernel subsystem that provides a mechanism to efficently monitor filesystem events such as :
+- creation, deletion, modification, accessing
+
+of files or directories.
+
 
 
