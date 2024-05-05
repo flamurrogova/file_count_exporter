@@ -6,107 +6,73 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/prometheus/common/version"
 )
 
+type myCollector struct {
+	fileCount *prometheus.Desc
+}
+
+func newMyCollector() *myCollector {
+	return &myCollector{
+		fileCount: prometheus.NewDesc("file_count",
+			"Count files in a folder",
+			[]string{"path"}, nil,
+		),
+	}
+}
+
+func (collector *myCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- collector.fileCount
+}
+
+func (collector *myCollector) Collect(ch chan<- prometheus.Metric) {
+
+	for _, path := range paths {
+		fileCnt := walkDir(path)
+		// 'path' is also metrics label
+		m := prometheus.MustNewConstMetric(collector.fileCount, prometheus.GaugeValue, float64(fileCnt), path)
+
+		ch <- m
+	}
+}
+
+// we will be monitoring these paths(folders)
+var (
+	paths []string
+)
+
 func main() {
 
-	// listening endpoint
+	// listener endpoint
 	endpoint := flag.String("endpoint", "localhost:8800", "The address to listen on for HTTP requests <IP>:<PORT>")
 	flag.Parse()
 
 	log.Println("Build context", "build_context", version.BuildContext())
-
 	log.Println("endpoint:", *endpoint)
-	for _, s := range flag.Args() {
-		fmt.Println("arg: ", s)
-	}
 
 	if len(flag.Args()) < 1 {
+		flag.Usage()
 		log.Fatal("missing paths")
 	}
 
-	// prometheus: create a gauge with one label named ("path")
-	fileCount := prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "file_count_on_path",
-			Help: "Count number of files on the path.",
-		},
-		// The label name by which to split the metric.
-		[]string{"path"},
-	)
+	paths = append(paths, flag.Args()...)
 
-	// prometheus: create a non-global registry
-	reg := prometheus.NewRegistry()
-	reg.MustRegister(collectors.NewBuildInfoCollector(), fileCount)
+	myColl := newMyCollector()
+	prometheus.MustRegister(myColl)
 
-	// fsnotify: create new watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer watcher.Close()
-
-	// fsnotify: add paths passed on command line
-	for _, path := range flag.Args() {
-		err = watcher.Add(path)
-		if err != nil {
-			log.Fatal(err, " : ", path)
-		}
-	}
-
-	// fsnotify: start listening for events
-	// we are interested only on file create/remove events
-	go func() {
-		for {
-			select {
-
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-
-				if event.Has(fsnotify.Create) {
-					name := filepath.Dir(event.Name)
-					fileCount.WithLabelValues(name).Inc()
-				}
-
-				if event.Has(fsnotify.Remove) {
-					name := filepath.Dir(event.Name)
-					fileCount.WithLabelValues(name).Dec()
-				}
-
-			case err, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				log.Println("error:", err)
-			}
-		}
-	}()
-
-	// prometheus: expose the registered metrics via HTTP.
-	http.Handle("/metrics", promhttp.HandlerFor(
-		reg,
-		promhttp.HandlerOpts{
-			// Pass custom registry
-			Registry: reg,
-		},
-	))
+	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(*endpoint, nil))
-
 }
 
 func init() {
 
 	// Define a custom usage message
+	// ... --base-path [] --exclude-path [] --path [single path]
 	flag.Usage = func() {
 		fmt.Println("\nUsage:")
 		fmt.Printf("  %s [options] [path1 path2 ...]\n", os.Args[0])
@@ -115,4 +81,20 @@ func init() {
 		flag.PrintDefaults()
 	}
 
+}
+
+func walkDir(path string) int {
+	i := 0
+	files, err := os.ReadDir(path)
+	if err != nil {
+		log.Printf("Error reading directory: %v", err)
+		return i
+	}
+
+	for _, file := range files {
+		if file.Type().IsRegular() {
+			i++
+		}
+	}
+	return i
 }
